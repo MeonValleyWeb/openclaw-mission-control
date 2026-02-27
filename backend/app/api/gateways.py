@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from typing import TYPE_CHECKING
+import os
 from uuid import UUID, uuid4
 
 from fastapi import APIRouter, Depends, Query
@@ -57,6 +58,8 @@ def _template_sync_query(
     overwrite: bool = OVERWRITE_QUERY,
     board_id: UUID | None = BOARD_ID_QUERY,
 ) -> GatewayTemplateSyncQuery:
+    if os.getenv("MC_DISABLE_TOKEN_ROTATION", "").strip().lower() in {"1", "true", "yes", "on"}:
+        rotate_tokens = False
     return GatewayTemplateSyncQuery(
         include_main=include_main,
         lead_only=lead_only,

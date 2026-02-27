@@ -130,8 +130,15 @@ jq -r '
 1) Confirm `BASE_URL`, `AUTH_TOKEN`, and `BOARD_ID` from `TOOLS.md` match this workspace.
 2) Verify API access:
 - `GET {{ base_url }}/healthz`
-- `GET {{ base_url }}/api/v1/agent/boards`
-- `GET {{ base_url }}/api/v1/agent/boards/{{ board_id }}/tasks`
+- `GET {{ base_url }}/api/v1/agent/boards` (use `X-Agent-Token: $AUTH_TOKEN`)
+- `GET {{ base_url }}/api/v1/agent/boards/{{ board_id }}/tasks` (use `X-Agent-Token: $AUTH_TOKEN`)
+Example (recommended):
+```bash
+AUTH_TOKEN=$(grep -o 'AUTH_TOKEN=[^`]*' TOOLS.md | head -1 | cut -d= -f2)
+curl -fsS "{{ base_url }}/healthz"
+curl -fsS -H "X-Agent-Token: $AUTH_TOKEN" "{{ base_url }}/api/v1/agent/boards"
+curl -fsS -H "X-Agent-Token: $AUTH_TOKEN" "{{ base_url }}/api/v1/agent/boards/{{ board_id }}/tasks"
+```
 3) If any check fails, stop and retry next heartbeat.
 
 ## Shared Context Pull

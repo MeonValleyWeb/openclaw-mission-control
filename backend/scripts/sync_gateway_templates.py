@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import os
 import sys
 from pathlib import Path
 from uuid import UUID
@@ -75,6 +76,13 @@ async def _run() -> int:
     )
 
     args = _parse_args()
+    if os.getenv("MC_DISABLE_TOKEN_ROTATION", "").strip().lower() in {"1", "true", "yes", "on"}:
+        if args.rotate_tokens:
+            sys.stderr.write(
+                "Token rotation disabled by MC_DISABLE_TOKEN_ROTATION; "
+                "--rotate-tokens will be ignored.\n",
+            )
+        args.rotate_tokens = False
     gateway_id = UUID(args.gateway_id)
     board_id = UUID(args.board_id) if args.board_id else None
     user_id = UUID(args.user_id) if args.user_id else None

@@ -414,7 +414,11 @@ async def _get_existing_auth_token(
     values = _parse_tools_md(tools)
     token = values.get("AUTH_TOKEN")
     if not token:
-        return None
+        match = re.search(r"AUTH_TOKEN=([A-Za-z0-9_-]+)", tools)
+        if match:
+            token = match.group(1)
+        else:
+            return None
     token = token.strip()
     return token or None
 
