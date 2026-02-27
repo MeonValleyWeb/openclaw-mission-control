@@ -94,7 +94,7 @@ describe("AgentsTable", () => {
         boards={[buildBoard()]}
         showActions={false}
         hiddenColumns={["status", "openclaw_session_id"]}
-        columnOrder={["updated_at", "name", "board_id", "last_seen_at"]}
+        columnOrder={["updated_at", "name", "model", "board_id", "last_seen_at"]}
       />,
     );
 
@@ -108,9 +108,10 @@ describe("AgentsTable", () => {
     const headers = screen
       .getAllByRole("columnheader")
       .map((header) => header.textContent?.replace(/[↑↓↕]/g, "").trim());
-    expect(headers.slice(0, 4)).toEqual([
+    expect(headers.slice(0, 5)).toEqual([
       "Updated",
       "Agent",
+      "Model",
       "Board",
       "Last seen",
     ]);

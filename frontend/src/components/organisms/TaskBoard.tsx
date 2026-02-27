@@ -34,21 +34,32 @@ type Task = {
 type TaskBoardProps = {
   tasks: Task[];
   onTaskSelect?: (task: Task) => void;
-  onTaskMove?: (taskId: string, status: TaskStatus) => void | Promise<void>;
+  onTaskMove?: (
+    taskId: string,
+    status: TaskStatus,
+    options?: { icebox?: boolean },
+  ) => void | Promise<void>;
   readOnly?: boolean;
+  iceboxTagId?: string | null;
 };
 
 type ReviewBucket = "all" | "approval_needed" | "waiting_lead" | "blocked";
 
-const columns: Array<{
+type BoardColumn = {
+  key: string;
   title: string;
   status: TaskStatus;
   dot: string;
   accent: string;
   text: string;
   badge: string;
-}> = [
+  isIcebox?: boolean;
+  filter?: (task: Task) => boolean;
+};
+
+const baseColumns: BoardColumn[] = [
   {
+    key: "inbox",
     title: "Inbox",
     status: "inbox",
     dot: "bg-slate-400",
@@ -57,6 +68,7 @@ const columns: Array<{
     badge: "bg-slate-100 text-slate-600",
   },
   {
+    key: "in_progress",
     title: "In Progress",
     status: "in_progress",
     dot: "bg-purple-500",
@@ -65,6 +77,7 @@ const columns: Array<{
     badge: "bg-purple-100 text-purple-700",
   },
   {
+    key: "review",
     title: "Review",
     status: "review",
     dot: "bg-indigo-500",
@@ -73,6 +86,7 @@ const columns: Array<{
     badge: "bg-indigo-100 text-indigo-700",
   },
   {
+    key: "done",
     title: "Done",
     status: "done",
     dot: "bg-green-500",
@@ -128,6 +142,7 @@ export const TaskBoard = memo(function TaskBoard({
   onTaskSelect,
   onTaskMove,
   readOnly = false,
+  iceboxTagId = null,
 }: TaskBoardProps) {
   const boardRef = useRef<HTMLDivElement | null>(null);
   const cardRefs = useRef<Map<string, HTMLDivElement>>(new Map());
@@ -137,8 +152,20 @@ export const TaskBoard = memo(function TaskBoard({
   const animatedTaskIdsRef = useRef<Set<string>>(new Set());
 
   const [draggingId, setDraggingId] = useState<string | null>(null);
-  const [activeColumn, setActiveColumn] = useState<TaskStatus | null>(null);
+  const [activeColumn, setActiveColumn] = useState<string | null>(null);
   const [reviewBucket, setReviewBucket] = useState<ReviewBucket>("all");
+
+  const isIceboxTask = useCallback(
+    (task: Task) => {
+      if (!iceboxTagId) return false;
+      return (
+        task.tags?.some(
+          (tag) => tag.id === iceboxTagId || tag.slug === "icebox",
+        ) ?? false
+      );
+    },
+    [iceboxTagId],
+  );
 
   const setCardRef = useCallback(
     (taskId: string) => (node: HTMLDivElement | null) => {
@@ -292,9 +319,6 @@ export const TaskBoard = memo(function TaskBoard({
       review: [],
       done: [],
     };
-    for (const column of columns) {
-      buckets[column.status] = [];
-    }
     tasks.forEach((task) => {
       const bucket = buckets[task.status] ?? buckets.inbox;
       bucket.push(task);
@@ -313,11 +337,12 @@ export const TaskBoard = memo(function TaskBoard({
         event.preventDefault();
         return;
       }
+      const icebox = isIceboxTask(task);
       setDraggingId(task.id);
       event.dataTransfer.effectAllowed = "move";
       event.dataTransfer.setData(
         "text/plain",
-        JSON.stringify({ taskId: task.id, status: task.status }),
+        JSON.stringify({ taskId: task.id, status: task.status, icebox }),
       );
     };
 
@@ -327,36 +352,218 @@ export const TaskBoard = memo(function TaskBoard({
   };
 
   const handleDrop =
-    (status: TaskStatus) => (event: React.DragEvent<HTMLDivElement>) => {
+    (status: TaskStatus, dropIcebox: boolean) =>
+    (event: React.DragEvent<HTMLDivElement>) => {
       if (readOnly) return;
       event.preventDefault();
       setActiveColumn(null);
       const raw = event.dataTransfer.getData("text/plain");
       if (!raw) return;
       try {
-        const payload = JSON.parse(raw) as { taskId?: string; status?: string };
+        const payload = JSON.parse(raw) as {
+          taskId?: string;
+          status?: string;
+          icebox?: boolean;
+        };
         if (!payload.taskId || !payload.status) return;
-        if (payload.status === status) return;
-        onTaskMove?.(payload.taskId, status);
+        if (payload.status === status && Boolean(payload.icebox) === dropIcebox)
+          return;
+        onTaskMove?.(payload.taskId, status, {
+          icebox: status === "inbox" ? dropIcebox : false,
+        });
       } catch {
         // Ignore malformed payloads.
       }
     };
 
   const handleDragOver =
-    (status: TaskStatus) => (event: React.DragEvent<HTMLDivElement>) => {
+    (columnKey: string) => (event: React.DragEvent<HTMLDivElement>) => {
       if (readOnly) return;
       event.preventDefault();
-      if (activeColumn !== status) {
-        setActiveColumn(status);
+      if (activeColumn !== columnKey) {
+        setActiveColumn(columnKey);
       }
     };
 
-  const handleDragLeave = (status: TaskStatus) => () => {
+  const handleDragLeave = (columnKey: string) => () => {
     if (readOnly) return;
-    if (activeColumn === status) {
+    if (activeColumn === columnKey) {
       setActiveColumn(null);
     }
+  };
+
+  const columns = useMemo(() => {
+    if (!iceboxTagId) {
+      return baseColumns;
+    }
+    const inboxColumn: BoardColumn = {
+      ...baseColumns[0],
+      filter: (task) => task.status === "inbox" && !isIceboxTask(task),
+    };
+    const iceboxColumn: BoardColumn = {
+      key: "icebox",
+      title: "Icebox",
+      status: "inbox",
+      dot: "bg-slate-300",
+      accent: "hover:border-slate-300 hover:bg-slate-50",
+      text: "group-hover:text-slate-600 text-slate-500",
+      badge: "bg-slate-100 text-slate-600",
+      isIcebox: true,
+      filter: (task) => task.status === "inbox" && isIceboxTask(task),
+    };
+    return [inboxColumn, iceboxColumn, ...baseColumns.slice(1)];
+  }, [iceboxTagId, isIceboxTask]);
+
+  const renderColumn = (
+    column: BoardColumn,
+    options?: { minHeightClass?: string },
+  ) => {
+    const minHeightClass =
+      options?.minHeightClass ?? "sm:min-h-[calc(100vh-260px)]";
+    const columnTasks = column.filter
+      ? tasks.filter(column.filter)
+      : grouped[column.status] ?? [];
+    const isReviewColumn = column.status === "review" && !column.isIcebox;
+
+    const filteredTasks =
+      isReviewColumn && reviewBucket !== "all"
+        ? columnTasks.filter((task) => {
+            if (reviewBucket === "blocked") return Boolean(task.is_blocked);
+            if (reviewBucket === "approval_needed")
+              return (
+                (task.approvals_pending_count ?? 0) > 0 && !task.is_blocked
+              );
+            if (reviewBucket === "waiting_lead")
+              return (
+                !task.is_blocked &&
+                (task.approvals_pending_count ?? 0) === 0
+              );
+            return true;
+          })
+        : columnTasks;
+
+    const reviewCounts = isReviewColumn
+      ? columnTasks.reduce(
+          (acc, task) => {
+            if (task.is_blocked) {
+              acc.blocked += 1;
+              return acc;
+            }
+            if ((task.approvals_pending_count ?? 0) > 0) {
+              acc.approval_needed += 1;
+              return acc;
+            }
+            acc.waiting_lead += 1;
+            return acc;
+          },
+          {
+            all: columnTasks.length,
+            approval_needed: 0,
+            waiting_lead: 0,
+            blocked: 0,
+          },
+        )
+      : null;
+
+    return (
+      <div
+        key={column.key}
+        className={cn(
+          "kanban-column min-h-0",
+          minHeightClass,
+          activeColumn === column.key && !readOnly && "ring-2 ring-slate-200",
+        )}
+        onDrop={readOnly ? undefined : handleDrop(column.status, !!column.isIcebox)}
+        onDragOver={readOnly ? undefined : handleDragOver(column.key)}
+        onDragLeave={readOnly ? undefined : handleDragLeave(column.key)}
+      >
+        <div className="column-header z-10 rounded-t-xl border border-b-0 border-slate-200 bg-white px-4 py-3 sm:sticky sm:top-0 sm:bg-white/80 sm:backdrop-blur">
+          <div className="flex items-center justify-between">
+            <div className="flex items-center gap-2">
+              <span className={cn("h-2 w-2 rounded-full", column.dot)} />
+              <h3 className="text-sm font-semibold text-slate-900">
+                {column.title}
+              </h3>
+            </div>
+            <span
+              className={cn(
+                "flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold",
+                column.badge,
+              )}
+            >
+              {filteredTasks.length}
+            </span>
+          </div>
+          {isReviewColumn && reviewCounts ? (
+            <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
+              {(
+                [
+                  { key: "all", label: "All", count: reviewCounts.all },
+                  {
+                    key: "approval_needed",
+                    label: "Approval needed",
+                    count: reviewCounts.approval_needed,
+                  },
+                  {
+                    key: "waiting_lead",
+                    label: "Lead review",
+                    count: reviewCounts.waiting_lead,
+                  },
+                  {
+                    key: "blocked",
+                    label: "Blocked",
+                    count: reviewCounts.blocked,
+                  },
+                ] as const
+              ).map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setReviewBucket(option.key)}
+                  className={cn(
+                    "rounded-full border px-2.5 py-1 transition",
+                    reviewBucket === option.key
+                      ? "border-slate-900 bg-slate-900 text-white"
+                      : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50",
+                  )}
+                  aria-pressed={reviewBucket === option.key}
+                >
+                  {option.label} · {option.count}
+                </button>
+              ))}
+            </div>
+          ) : null}
+        </div>
+        <div className="rounded-b-xl border border-t-0 border-slate-200 bg-white p-3">
+          <div className="space-y-3">
+            {filteredTasks.map((task) => {
+              const dueState = resolveDueState(task);
+              return (
+                <div key={task.id} ref={setCardRef(task.id)}>
+                  <TaskCard
+                    title={task.title}
+                    status={task.status}
+                    priority={task.priority}
+                    assignee={task.assignee ?? undefined}
+                    due={dueState.due}
+                    isOverdue={dueState.isOverdue}
+                    approvalsPendingCount={task.approvals_pending_count}
+                    tags={task.tags}
+                    isBlocked={task.is_blocked}
+                    blockedByCount={task.blocked_by_task_ids?.length ?? 0}
+                    onClick={() => onTaskSelect?.(task)}
+                    draggable={!readOnly && !task.is_blocked}
+                    isDragging={draggingId === task.id}
+                    onDragStart={readOnly ? undefined : handleDragStart(task)}
+                    onDragEnd={readOnly ? undefined : handleDragEnd}
+                  />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      </div>
+    );
   };
 
   return (
@@ -370,156 +577,13 @@ export const TaskBoard = memo(function TaskBoard({
         "sm:grid-flow-col sm:auto-cols-[minmax(260px,320px)] sm:grid-cols-none sm:overflow-x-auto",
       )}
     >
-      {columns.map((column) => {
-        const columnTasks = grouped[column.status] ?? [];
-        // Derive review tab counts and the active subset from one canonical task list.
-        const reviewCounts =
-          column.status === "review"
-            ? columnTasks.reduce(
-                (acc, task) => {
-                  if (task.is_blocked) {
-                    acc.blocked += 1;
-                    return acc;
-                  }
-                  if ((task.approvals_pending_count ?? 0) > 0) {
-                    acc.approval_needed += 1;
-                    return acc;
-                  }
-                  acc.waiting_lead += 1;
-                  return acc;
-                },
-                {
-                  all: columnTasks.length,
-                  approval_needed: 0,
-                  waiting_lead: 0,
-                  blocked: 0,
-                },
-              )
-            : null;
-
-        const filteredTasks =
-          column.status === "review" && reviewBucket !== "all"
-            ? columnTasks.filter((task) => {
-                if (reviewBucket === "blocked") return Boolean(task.is_blocked);
-                if (reviewBucket === "approval_needed")
-                  return (
-                    (task.approvals_pending_count ?? 0) > 0 && !task.is_blocked
-                  );
-                if (reviewBucket === "waiting_lead")
-                  return (
-                    !task.is_blocked &&
-                    (task.approvals_pending_count ?? 0) === 0
-                  );
-                return true;
-              })
-            : columnTasks;
-
-        return (
-          <div
-            key={column.title}
-            className={cn(
-              // On mobile, columns are stacked, so avoid forcing tall fixed heights.
-              "kanban-column min-h-0",
-              // On larger screens, keep columns tall to reduce empty space during drag.
-              "sm:min-h-[calc(100vh-260px)]",
-              activeColumn === column.status &&
-                !readOnly &&
-                "ring-2 ring-slate-200",
-            )}
-            onDrop={readOnly ? undefined : handleDrop(column.status)}
-            onDragOver={readOnly ? undefined : handleDragOver(column.status)}
-            onDragLeave={readOnly ? undefined : handleDragLeave(column.status)}
-          >
-            <div className="column-header z-10 rounded-t-xl border border-b-0 border-slate-200 bg-white px-4 py-3 sm:sticky sm:top-0 sm:bg-white/80 sm:backdrop-blur">
-              <div className="flex items-center justify-between">
-                <div className="flex items-center gap-2">
-                  <span className={cn("h-2 w-2 rounded-full", column.dot)} />
-                  <h3 className="text-sm font-semibold text-slate-900">
-                    {column.title}
-                  </h3>
-                </div>
-                <span
-                  className={cn(
-                    "flex h-6 w-6 items-center justify-center rounded-full text-xs font-semibold",
-                    column.badge,
-                  )}
-                >
-                  {filteredTasks.length}
-                </span>
-              </div>
-              {column.status === "review" && reviewCounts ? (
-                <div className="mt-2 flex flex-wrap items-center gap-2 text-[10px] font-semibold uppercase tracking-wide text-slate-500">
-                  {(
-                    [
-                      { key: "all", label: "All", count: reviewCounts.all },
-                      {
-                        key: "approval_needed",
-                        label: "Approval needed",
-                        count: reviewCounts.approval_needed,
-                      },
-                      {
-                        key: "waiting_lead",
-                        label: "Lead review",
-                        count: reviewCounts.waiting_lead,
-                      },
-                      {
-                        key: "blocked",
-                        label: "Blocked",
-                        count: reviewCounts.blocked,
-                      },
-                    ] as const
-                  ).map((option) => (
-                    <button
-                      key={option.key}
-                      type="button"
-                      onClick={() => setReviewBucket(option.key)}
-                      className={cn(
-                        "rounded-full border px-2.5 py-1 transition",
-                        reviewBucket === option.key
-                          ? "border-slate-900 bg-slate-900 text-white"
-                          : "border-slate-200 bg-white text-slate-600 hover:border-slate-300 hover:bg-slate-50",
-                      )}
-                      aria-pressed={reviewBucket === option.key}
-                    >
-                      {option.label} · {option.count}
-                    </button>
-                  ))}
-                </div>
-              ) : null}
-            </div>
-            <div className="rounded-b-xl border border-t-0 border-slate-200 bg-white p-3">
-              <div className="space-y-3">
-                {filteredTasks.map((task) => {
-                  const dueState = resolveDueState(task);
-                  return (
-                    <div key={task.id} ref={setCardRef(task.id)}>
-                      <TaskCard
-                        title={task.title}
-                        status={task.status}
-                        priority={task.priority}
-                        assignee={task.assignee ?? undefined}
-                        due={dueState.due}
-                        isOverdue={dueState.isOverdue}
-                        approvalsPendingCount={task.approvals_pending_count}
-                        tags={task.tags}
-                        isBlocked={task.is_blocked}
-                        blockedByCount={task.blocked_by_task_ids?.length ?? 0}
-                        onClick={() => onTaskSelect?.(task)}
-                        draggable={!readOnly && !task.is_blocked}
-                        isDragging={draggingId === task.id}
-                        onDragStart={
-                          readOnly ? undefined : handleDragStart(task)
-                        }
-                        onDragEnd={readOnly ? undefined : handleDragEnd}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            </div>
-          </div>
-        );
-      })}
+      {iceboxTagId ? (
+        <div className="flex flex-col gap-4">
+          {renderColumn(columns[0], { minHeightClass: "sm:min-h-0" })}
+          {renderColumn(columns[1], { minHeightClass: "sm:min-h-0" })}
+        </div>
+      ) : null}
+      {columns.slice(iceboxTagId ? 2 : 0).map((column) => renderColumn(column))}
     </div>
   );
 });

@@ -117,6 +117,19 @@ export function AgentsTable({
         cell: ({ row }) => pillCell(row.original.status),
       },
       {
+        id: "model",
+        header: "Model",
+        cell: ({ row }) => {
+          const model =
+            (row.original.identity_profile as { model?: string } | null)?.model;
+          return (
+            <span className="text-sm text-slate-700">
+              {model ? truncate(model, 40) : "—"}
+            </span>
+          );
+        },
+      },
+      {
         accessorKey: "openclaw_session_id",
         header: "Session",
         cell: ({ row }) => (

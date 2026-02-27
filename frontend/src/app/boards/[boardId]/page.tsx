@@ -818,6 +818,15 @@ export default function BoardDetailPage() {
   const [board, setBoard] = useState<Board | null>(null);
   const [tasks, setTasks] = useState<Task[]>([]);
   const [agents, setAgents] = useState<Agent[]>([]);
+  const iceboxTagId = useMemo(() => {
+    const fromTags = tags.find((tag) => tag.slug === "icebox")?.id ?? null;
+    if (fromTags) return fromTags;
+    for (const task of tasks) {
+      const tag = task.tags?.find((candidate) => candidate.slug === "icebox");
+      if (tag?.id) return tag.id;
+    }
+    return null;
+  }, [tags, tasks]);
   const [groupSnapshot, setGroupSnapshot] = useState<BoardGroupSnapshot | null>(
     null,
   );
@@ -2697,25 +2706,51 @@ export default function BoardDetailPage() {
   };
 
   const handleTaskMove = useCallback(
-    async (taskId: string, status: TaskStatus) => {
+    async (taskId: string, status: TaskStatus, options?: { icebox?: boolean }) => {
       if (!isSignedIn || !boardId) return;
       const currentTask = tasksRef.current.find((task) => task.id === taskId);
-      if (!currentTask || currentTask.status === status) return;
+      if (!currentTask) return;
+      const currentTagIds = currentTask.tag_ids ?? [];
+      const currentIcebox = Boolean(
+        iceboxTagId && currentTagIds.includes(iceboxTagId),
+      );
+      const nextIcebox =
+        status === "inbox" && options?.icebox === true && Boolean(iceboxTagId);
+      const statusChanged = currentTask.status !== status;
+      const iceboxChanged =
+        Boolean(iceboxTagId) && currentIcebox !== nextIcebox;
+      if (!statusChanged && !iceboxChanged) return;
       if (currentTask.is_blocked && status !== "inbox") {
         setError("Task is blocked by incomplete dependencies.");
         return;
       }
+      const nextTagIds = iceboxTagId
+        ? (() => {
+            const base = currentTagIds.filter((id) => id !== iceboxTagId);
+            return nextIcebox ? [...base, iceboxTagId] : base;
+          })()
+        : currentTagIds;
+      const tagIdsChanged =
+        currentTagIds.length !== nextTagIds.length ||
+        [...currentTagIds].sort().join(",") !==
+          [...nextTagIds].sort().join(",");
       const previousTasks = tasksRef.current;
       setTasks((prev) =>
         prev.map((task) =>
           task.id === taskId
-            ? {
+            ? ({
                 ...task,
                 status,
                 assigned_agent_id:
                   status === "inbox" ? null : task.assigned_agent_id,
                 assignee: status === "inbox" ? null : task.assignee,
-              }
+                tag_ids: nextTagIds,
+                tags: tagIdsChanged
+                  ? (nextTagIds
+                      .map((id) => tagById.get(id))
+                      .filter(Boolean) as Task["tags"])
+                  : task.tags,
+              } satisfies Task)
             : task,
         ),
       );
@@ -2723,7 +2758,10 @@ export default function BoardDetailPage() {
         const result = await updateTaskApiV1BoardsBoardIdTasksTaskIdPatch(
           boardId,
           taskId,
-          { status },
+          {
+            status,
+            ...(tagIdsChanged ? { tag_ids: nextTagIds } : {}),
+          },
         );
         if (result.status === 409) {
           const blockedIds = result.data.detail.blocked_by_task_ids ?? [];
@@ -2766,7 +2804,7 @@ export default function BoardDetailPage() {
         pushToast(message);
       }
     },
-    [boardId, isSignedIn, pushToast, taskTitleById],
+    [boardId, iceboxTagId, isSignedIn, pushToast, tagById, taskTitleById],
   );
 
   const agentInitials = (agent: Agent) =>
@@ -3444,6 +3482,7 @@ export default function BoardDetailPage() {
                       onTaskSelect={openComments}
                       onTaskMove={canWrite ? handleTaskMove : undefined}
                       readOnly={!canWrite}
+                      iceboxTagId={iceboxTagId}
                     />
                   ) : (
                     <div className="rounded-xl border border-slate-200 bg-white shadow-sm">
